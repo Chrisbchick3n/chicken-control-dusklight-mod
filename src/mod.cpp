@@ -10,6 +10,7 @@
 #include "mods/svc/net.hpp"
 
 #include "effects.h"
+#include "game_api.h"
 #include "net_bridge.h"
 
 #include <chrono>
@@ -35,6 +36,11 @@ std::chrono::steady_clock::time_point g_last_tick;
 extern "C" {
 
 MOD_EXPORT ModResult mod_initialize(ModError* error) {
+    // Installs the pad-read hook the freeze/invert effects rely on. Must
+    // happen after services are resolved (they are, by this point) and
+    // before anything can request those effects.
+    chickencontrol::game::installHooks();
+
     g_effects = std::make_unique<chickencontrol::EffectRunner>();
     g_bridge = std::make_unique<chickencontrol::NetBridge>(kBindHost, kBindPort);
 
@@ -60,8 +66,9 @@ MOD_EXPORT ModResult mod_update(ModError*) {
     // Accept/parse/dispatch anything received since the last tick.
     g_bridge->poll(*g_effects);
 
-    // Advance timed effects (freeze/invert) and re-apply their input
-    // overrides every frame while they're active.
+    // Expires timed effects (freeze/invert/camera shake) once their
+    // duration runs out. The overrides themselves are applied by a hook,
+    // not from here - see game_api.cpp's installHooks().
     g_effects->tick(delta);
 
     return MOD_OK;
