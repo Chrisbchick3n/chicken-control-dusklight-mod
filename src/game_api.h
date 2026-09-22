@@ -46,6 +46,17 @@ int getRupeeCapacity();
 Result setRupees(int amount);
 Result addRupees(int amount);
 
+// -- magic, arrows, bombs (all clamp to the player's current capacity) -----
+Result setMaxHearts(int hearts);          // in whole heart containers
+Result setMagic(int amount);
+Result addMagic(int amount);
+int getArrows();
+Result setArrows(int amount);
+Result addArrows(int amount);
+int getBombs();
+Result setBombs(int amount);
+Result addBombs(int amount);
+
 // -- world ------------------------------------------------------------------
 // Hour runs 0-23 and is converted to the game's own clock scale.
 Result setTimeOfDay(int hour);
@@ -71,16 +82,21 @@ Result showMessage(int message_id);
 Result playSound(unsigned int sound_id);
 
 // -- input -------------------------------------------------------------------------
-// Used by the timed effects. The mod checks these every frame and adjusts
-// the stick before the player reads it.
+// Used by the timed effects. Applied via a hook on the game's own pad-read
+// function (see installHooks()) rather than polled from mod_update, so the
+// override always lands after the game's own hardware read and can't be
+// overwritten by it later in the same frame.
 void setMovementFrozen(bool frozen);
 void setControlsInverted(bool inverted);
 bool isMovementFrozen();
 bool areControlsInverted();
 
-// Called once per frame from mod_update so the input tweaks above can be
-// applied while they're active.
-void applyInputOverrides();
+// -- setup -------------------------------------------------------------------------
+// Installs the game-function hooks this file depends on (currently just the
+// pad-read hook used by the input overrides above). Call once from
+// mod_initialize, after services are resolved. Safe to call when built
+// without the game (does nothing).
+void installHooks();
 
 }  // namespace game
 }  // namespace chickencontrol
