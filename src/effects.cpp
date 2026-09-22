@@ -6,11 +6,7 @@
 namespace chickencontrol {
 
 namespace {
-// One full heart is four of the game's health units.
 constexpr int kQuartersPerHeart = 4;
-
-// How long the timed effects last, in seconds. These match the defaults
-// shown in launcher/effects.py.
 constexpr double kFreezeSeconds = 8.0;
 constexpr double kInvertSeconds = 15.0;
 
@@ -54,9 +50,9 @@ void EffectRunner::tick(double delta_seconds) {
             ++it;
         }
     }
-
-    // Keep the frozen/inverted stick applied while those are running.
-    game::applyInputOverrides();
+    // Freeze/invert are applied by a hook on the game's own pad-read
+    // function now (see game_api.cpp's installHooks()), not polled from
+    // here - nothing to do each tick beyond expiring them above.
 }
 
 void EffectRunner::endEverything() {
@@ -124,6 +120,27 @@ void EffectRunner::registerHandlers() {
 
     handlers_["player.take_rupees"] = [](const EffectCommand& cmd) {
         return game::addRupees(-paramInt(cmd, "amount", 0));
+    };
+
+    // ---- magic, arrows, bombs ----
+    handlers_["player.set_max_hearts"] = [](const EffectCommand& cmd) {
+        return game::setMaxHearts(paramInt(cmd, "hearts", 3));
+    };
+
+    handlers_["player.give_magic"] = [](const EffectCommand& cmd) {
+        return game::addMagic(paramInt(cmd, "amount", 4));
+    };
+
+    handlers_["player.fill_magic"] = [](const EffectCommand&) {
+        return game::setMagic(999);  // clamped to the player's actual max internally
+    };
+
+    handlers_["player.give_arrows"] = [](const EffectCommand& cmd) {
+        return game::addArrows(paramInt(cmd, "amount", 30));
+    };
+
+    handlers_["player.give_bombs"] = [](const EffectCommand& cmd) {
+        return game::addBombs(paramInt(cmd, "amount", 10));
     };
 
     // ---- messing with the controls ----
