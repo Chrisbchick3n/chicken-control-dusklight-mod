@@ -1,7 +1,7 @@
 {
-  "id": "com.example.my_mod",
-  "name": "My Mod",
+  "id": "com.chickencontrol.bridge",
+  "name": "Chicken Control Bridge",
   "version": "@PROJECT_VERSION@",
-  "author": "You",
-  "description": "An example Dusklight mod"
+  "author": "Chicken Control",
+  "description": "Lets the Chicken Control TikTok gift app trigger in-game effects over a local TCP connection."
 }
