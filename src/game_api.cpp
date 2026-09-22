@@ -5,6 +5,7 @@
 #ifdef CHICKEN_CONTROL_HAS_GAME
 // These come from the Twilight Princess decompilation that Dusklight is
 // built on. Paths follow that project's include layout.
+#include "d/actor/d_a_alink.h"
 #include "d/d_com_inf_game.h"
 #include "d/d_save.h"
 #include "d/d_vibration.h"
@@ -12,6 +13,17 @@
 #include "f_op/f_op_msg_mng.h"
 #include "m_Do/m_Do_controller_pad.h"
 #include "SSystem/SComponent/c_API_controller_pad.h"
+#include "mods/svc/hook.hpp"
+
+IMPORT_SERVICE(HookService, svc_hook);
+
+// mDoCPd_c::convert() is what copies the real hardware stick into the
+// struct gameplay code reads (m_Do_controller_pad.cpp) - it's called once
+// per pad, every frame, from the same place the game reads its own input.
+// Hooking it (rather than polling from mod_update, which raced against
+// this and mostly lost) means our override always lands after the real
+// value and before anything downstream reads it.
+DEFINE_HOOK(&mDoCPd_c::convert, ConvertPad);
 #endif
 
 namespace chickencontrol {
@@ -95,6 +107,56 @@ Result addRupees(int amount) {
     return setRupees(getRupees() + amount);
 }
 
+Result setMaxHearts(int hearts) {
+    if (!playerReady()) return Result::failure("no save loaded yet");
+    if (hearts < 1) return Result::failure("must be at least one heart");
+    // Same units as getLife()/setLife() - quarter-hearts.
+    dComIfGs_setMaxLife(static_cast<u8>(std::clamp(hearts * 4, 4, 255)));
+    return Result::success();
+}
+
+Result setMagic(int amount) {
+    if (!playerReady()) return Result::failure("no save loaded yet");
+    const int max_magic = dComIfGs_getMaxMagic();
+    dComIfGs_setMagic(static_cast<u8>(std::clamp(amount, 0, max_magic > 0 ? max_magic : 255)));
+    return Result::success();
+}
+
+Result addMagic(int amount) {
+    if (!playerReady()) return Result::failure("no save loaded yet");
+    return setMagic(static_cast<int>(dComIfGs_getMagic()) + amount);
+}
+
+int getArrows() { return dComIfGs_getArrowNum(); }
+
+Result setArrows(int amount) {
+    if (!playerReady()) return Result::failure("no save loaded yet");
+    const int max_arrows = dComIfGs_getArrowMax();
+    dComIfGs_setArrowNum(static_cast<u8>(std::clamp(amount, 0, max_arrows > 0 ? max_arrows : 255)));
+    return Result::success();
+}
+
+Result addArrows(int amount) {
+    if (!playerReady()) return Result::failure("no save loaded yet");
+    return setArrows(getArrows() + amount);
+}
+
+int getBombs() { return dComIfGs_getBombNum(0); }
+
+Result setBombs(int amount) {
+    if (!playerReady()) return Result::failure("no save loaded yet");
+    // Bag 0 is the first (always-available) bomb bag; matches the simple
+    // single-number "how many bombs" idea this effect is going for.
+    const int max_bombs = dComIfGs_getBombMax();
+    dComIfGs_setBombNum(0, static_cast<u8>(std::clamp(amount, 0, max_bombs > 0 ? max_bombs : 255)));
+    return Result::success();
+}
+
+Result addBombs(int amount) {
+    if (!playerReady()) return Result::failure("no save loaded yet");
+    return setBombs(getBombs() + amount);
+}
+
 Result setTimeOfDay(int hour) {
     if (!playerReady()) return Result::failure("no save loaded yet");
     if (hour < 0 || hour > 23) return Result::failure("hour must be between 0 and 23");
@@ -125,8 +187,22 @@ Result setWolfForm(bool wolf) {
     if (!dComIfGs_isEventBit(kEventBitTransformUnlocked)) {
         return Result::failure("the player can't transform yet at this point in the story");
     }
-    // Non-zero means wolf.
-    dComIfGs_setTransformStatus(wolf ? 1 : 0);
+    if (isWolfForm() == wolf) return Result::success();  // already there
+
+    // dComIfGs_setTransformStatus() only flips the save flag - it's what
+    // daAlink_c::changeWolf()/changeLink() call internally once they've
+    // finished actually swapping the live model/animation/state over, but
+    // setting it directly (as this used to do) leaves the player looking
+    // and playing as whatever form they already were. Call the real
+    // transform functions instead; they set the flag themselves as part of
+    // doing the swap for real. Link is always a daAlink_c under the actor
+    // pointer dComIfGp_getPlayer(0) hands back, in both forms.
+    daAlink_c* link = static_cast<daAlink_c*>(playerActor());
+    if (wolf) {
+        link->changeWolf();
+    } else {
+        link->changeLink(0);
+    }
     return Result::success();
 }
 
@@ -164,13 +240,17 @@ Result playSound(unsigned int sound_id) {
     return Result::success();
 }
 
-void applyInputOverrides() {
-    if (!playerReady()) return;
+namespace {
+// Runs after the game has copied real hardware input into a pad's
+// interface struct. Only pad 0 (the player) is touched; convert() is
+// called once per pad (up to 4) every frame, and there's no argument
+// telling us which one this call is for, so we compare against the one
+// gameplay code actually reads from.
+void onConvertPadPost(ModContext*, void* args, void*, void*) {
     if (!g_movement_frozen && !g_controls_inverted) return;
 
-    // The stick is read fresh every frame, so changing it here lands before
-    // the player actor gets to use it.
-    interface_of_controller_pad& pad = mDoCPd_c::getCpadInfo(0);
+    interface_of_controller_pad& pad = mods::arg_ref<interface_of_controller_pad>(args, 0);
+    if (&pad != &mDoCPd_c::getCpadInfo(0)) return;
 
     if (g_movement_frozen) {
         pad.mMainStickPosX = 0.0f;
@@ -183,6 +263,11 @@ void applyInputOverrides() {
         // so that has to be turned around too or movement fights itself.
         pad.mMainStickAngle = static_cast<s16>(pad.mMainStickAngle + 0x8000);
     }
+}
+}  // namespace
+
+void installHooks() {
+    mods::hook::add_post<ConvertPad>(onConvertPadPost);
 }
 
 #else
@@ -206,6 +291,15 @@ int getRupees() { return 0; }
 int getRupeeCapacity() { return 0; }
 Result setRupees(int) { return Result::failure(kNoGame); }
 Result addRupees(int) { return Result::failure(kNoGame); }
+Result setMaxHearts(int) { return Result::failure(kNoGame); }
+Result setMagic(int) { return Result::failure(kNoGame); }
+Result addMagic(int) { return Result::failure(kNoGame); }
+int getArrows() { return 0; }
+Result setArrows(int) { return Result::failure(kNoGame); }
+Result addArrows(int) { return Result::failure(kNoGame); }
+int getBombs() { return 0; }
+Result setBombs(int) { return Result::failure(kNoGame); }
+Result addBombs(int) { return Result::failure(kNoGame); }
 Result setTimeOfDay(int) { return Result::failure(kNoGame); }
 Result spawnActor(const std::string&) { return Result::failure(kNoGame); }
 Result setWolfForm(bool) { return Result::failure(kNoGame); }
@@ -214,7 +308,7 @@ Result setItemSlot(int, int) { return Result::failure(kNoGame); }
 Result shakeScreen(int) { return Result::failure(kNoGame); }
 Result showMessage(int) { return Result::failure(kNoGame); }
 Result playSound(unsigned int) { return Result::failure(kNoGame); }
-void applyInputOverrides() {}
+void installHooks() {}
 
 #endif  // CHICKEN_CONTROL_HAS_GAME
 
