@@ -7,6 +7,7 @@
 // built on. Paths follow that project's include layout.
 #include "d/actor/d_a_alink.h"
 #include "d/d_com_inf_game.h"
+#include "d/d_item.h"
 #include "d/d_save.h"
 #include "d/d_vibration.h"
 #include "f_op/f_op_actor_mng.h"
