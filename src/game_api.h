@@ -64,12 +64,77 @@ Result setTimeOfDay(int hour);
 // Spawns an actor by its name, next to the player.
 Result spawnActor(const std::string& actor_name);
 
+// Warps the player to another stage (area/dungeon), using the game's own
+// scene-transition mechanism - the same one a "Continue" load or a Midna
+// warp point uses (dComIfGp_setNextStage(), from d/d_com_inf_game.h/.cpp).
+// stage_code is one of TP's internal stage names (e.g. "F_SP103" for Ordon
+// Village) - see launcher/games/dusklight/locations.py for the list this
+// mod is expected to receive. Always targets room 0 at spawn point 0 with
+// no specific layer, since only the stage codes themselves - not the
+// per-stage room/entrance-point numbers, which differ for every location
+// and aren't practical to hand-verify for all of them - could be confirmed
+// against the real decompilation. Room 0/point 0 is where most stages'
+// primary entrance lands; a few may drop the player somewhere unexpected
+// within that stage. Same honest caveat as world.spawn_actor's bosses.
+Result warpToStage(const std::string& stage_code);
+
 // -- player form --------------------------------------------------------------
 Result setWolfForm(bool wolf);
 bool isWolfForm();
 
 // -- items -----------------------------------------------------------------------
 Result setItemSlot(int slot, int item_id);
+
+// Gives the player an item by its dItemNo_* id (see
+// launcher/games/dusklight/items.py) using execItemGet() - the real
+// function-pointer table TP itself uses when the player picks something up
+// (include/d/d_item.h / src/d/d_item.cpp), confirmed against the actual
+// zeldaret/tp decompilation to be what real "give item" cheats (including
+// Crowd Control's own TP pack) use. A handful of item ids listed there are
+// confirmed no-ops in that real table (the game never wired up a pickup
+// handler for them) - giveItem() still calls execItemGet() for those and
+// reports success, since the call itself is real even though nothing
+// visibly changes; see the caveat in items.py.
+//
+// Two real quest items have NO dItemNo_* id at all in the decompilation -
+// Fused Shadow fragments and the first Mirror of Twilight shard - they're
+// tracked purely by dSv_player_collect_c's own bitfields
+// (dComIfGs_onCollectCrystal()/onCollectMirror(), confirmed in
+// src/d/d_save.cpp and src/d/d_com_inf_game.h). item_id 165-167 (the other
+// three mirror shards, which DO have real ids but whose execItemGet entries
+// are confirmed no-ops) and the pseudo-ids 1000-1004 (items.py's
+// ID_MIRROR_SHARD_1/ID_FUSED_SHADOW_1..4, which don't correspond to any
+// real item id) are special-cased to call those bitfield functions directly
+// instead of execItemGet().
+Result giveItem(int item_id);
+
+// The reverse of giveItem(), on a best-effort basis. TP's decompilation has
+// no unified "take this item away" function - unlike picking something up,
+// nothing in the retail game ever needs to un-collect an item, so nothing
+// like execItemGet() exists for removal. This handles what's actually
+// possible, confirmed against the decompilation for each case:
+//   - Fused Shadow fragments / Mirror of Twilight shards: the exact reverse
+//     of the special-cased bitfield calls above
+//     (dComIfGs_offCollectCrystal()/offCollectMirror()).
+//   - The Sword and Master Sword: dComIfGs_offCollectSword(), the same
+//     collect-bit clearer item_func_SWORD/MASTER_SWORD's own give-path sets
+//     (via setCollectSword()) - confirmed present in
+//     include/d/d_com_inf_game.h, though it only clears the "have
+//     collected" bit, not necessarily whatever sword is currently equipped.
+//   - Key items that live in one of the game's 24 fixed item slots
+//     (Boomerang, Spinner, Ball and Chain, Bow, Clawshot, Dominion Rod,
+//     Double Clawshot, Lantern, Fishing Rod): clears that item's slot with
+//     dComIfGs_setItem(slotNo, dItemNo_NONE_e) - the same pattern the real
+//     item_func_W_HOOKSHOT uses to clear the single Clawshot's slot when
+//     upgrading to the Double Clawshot. The slot number for each of these
+//     was reverse-derived from each item's own item_func_* body in
+//     src/d/d_item.cpp (there's no named per-item slot enum in the
+//     decompilation - only a generic 24-entry ItemSlots enum), not from a
+//     dedicated mapping table, since none exists.
+// Anything else (wallet/bomb bag/arrow tiers, armor, shields, and every
+// other item.py entry not listed above) fails cleanly with an honest reason
+// instead of silently doing nothing or guessing at an unverified mechanism.
+Result takeItem(int item_id);
 
 // -- feedback ------------------------------------------------------------------
 // Shakes the screen and rumbles the controller. Strength is 1-8.
