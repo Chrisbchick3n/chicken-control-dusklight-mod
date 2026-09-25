@@ -6,7 +6,11 @@
 namespace chickencontrol {
 
 namespace {
+// One full heart is four of the game's health units.
 constexpr int kQuartersPerHeart = 4;
+
+// How long the timed effects last, in seconds. These match the defaults
+// shown in launcher/effects.py.
 constexpr double kFreezeSeconds = 8.0;
 constexpr double kInvertSeconds = 15.0;
 
@@ -176,9 +180,21 @@ void EffectRunner::registerHandlers() {
         return game::setItemSlot(paramInt(cmd, "slot", 0), paramInt(cmd, "item_id", 0));
     };
 
+    handlers_["world.give_item"] = [](const EffectCommand& cmd) {
+        return game::giveItem(paramInt(cmd, "item_id", 0));
+    };
+
+    handlers_["world.take_item"] = [](const EffectCommand& cmd) {
+        return game::takeItem(paramInt(cmd, "item_id", 0));
+    };
+
     // ---- world ----
     handlers_["world.spawn_actor"] = [](const EffectCommand& cmd) {
         return game::spawnActor(paramString(cmd, "actor_name", ""));
+    };
+
+    handlers_["world.teleport"] = [](const EffectCommand& cmd) {
+        return game::warpToStage(paramString(cmd, "stage_code", ""));
     };
 
     handlers_["world.set_time_of_day"] = [](const EffectCommand& cmd) {
