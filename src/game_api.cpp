@@ -182,6 +182,23 @@ Result spawnActor(const std::string& actor_name) {
     return Result::success();
 }
 
+Result warpToStage(const std::string& stage_code) {
+    if (!playerReady()) return Result::failure("no save loaded yet");
+    if (stage_code.empty()) return Result::failure("no stage code given");
+    // dComIfGp_setNextStage() is the real function TP's own scene manager
+    // uses for field/dungeon transitions (loading a save, a Midna warp
+    // point, and so on) - it queues the transition (stage name, spawn
+    // point, room, layer) on g_dComIfG_gameInfo.play for the engine to
+    // pick up and load on its own, rather than swapping the world out
+    // directly. Point 0, room 0, layer -1 (TP's own "no specific layer"
+    // value - see this same function's clamp for >=15) is the closest
+    // thing to a generic "walk in the default way" for a stage whose real
+    // entrance-point number wasn't confirmed here - see the caveat on
+    // warpToStage() in game_api.h.
+    dComIfGp_setNextStage(stage_code.c_str(), /*point*/ 0, /*roomNo*/ 0, /*layer*/ -1);
+    return Result::success();
+}
+
 Result setWolfForm(bool wolf) {
     if (!playerReady()) return Result::failure("no save loaded yet");
     if (!dComIfGs_isEventBit(kEventBitTransformUnlocked)) {
@@ -215,6 +232,83 @@ Result setItemSlot(int slot, int item_id) {
     if (slot < 0) return Result::failure("bad item slot");
     dComIfGs_setSelectItemIndex(slot, static_cast<u8>(item_id));
     return Result::success();
+}
+
+namespace {
+// items.py's ID_MIRROR_SHARD_1/ID_FUSED_SHADOW_1..4 - see the comment on
+// giveItem()/takeItem() in game_api.h for why these exist at all.
+constexpr int kIdMirrorShard1 = 1000;
+constexpr int kIdFusedShadow1 = 1001;
+constexpr int kIdFusedShadow4 = 1004;
+}  // namespace
+
+Result giveItem(int item_id) {
+    if (!playerReady()) return Result::failure("no save loaded yet");
+    if (item_id == 255) return Result::failure("\"None\" isn't a real item");
+
+    if (item_id >= kIdFusedShadow1 && item_id <= kIdFusedShadow4) {
+        dComIfGs_onCollectCrystal(static_cast<u8>(item_id - kIdFusedShadow1));
+        return Result::success();
+    }
+    if (item_id == kIdMirrorShard1) {
+        dComIfGs_onCollectMirror(0);
+        return Result::success();
+    }
+    if (item_id == 165 || item_id == 166 || item_id == 167) {
+        // execItemGet() no-ops for these three (confirmed in the decomp's
+        // own item_func_MIRROR_PIECE_2/3/4 bodies) - onCollectMirror() is
+        // the real grant path. Shard 1 is index 0 (see kIdMirrorShard1
+        // above); shards 2/3/4 (these ids) are indices 1/2/3.
+        dComIfGs_onCollectMirror(static_cast<u8>(item_id - 165 + 1));
+        return Result::success();
+    }
+    if (item_id < 0 || item_id > 255) return Result::failure("bad item id");
+
+    // execItemGet() is TP's own real "the player just got this item" table
+    // - the same one a field/dungeon pickup calls. A few ids are confirmed
+    // no-ops in that real table (see items.py's DUSKLIGHT_STORY_ITEMS
+    // comment) - still called and reported as success, since the call
+    // itself is exactly what the real game would do for that id.
+    execItemGet(static_cast<u8>(item_id));
+    return Result::success();
+}
+
+Result takeItem(int item_id) {
+    if (!playerReady()) return Result::failure("no save loaded yet");
+    if (item_id == 255) return Result::failure("\"None\" isn't a real item");
+
+    if (item_id >= kIdFusedShadow1 && item_id <= kIdFusedShadow4) {
+        dComIfGs_offCollectCrystal(static_cast<u8>(item_id - kIdFusedShadow1));
+        return Result::success();
+    }
+    if (item_id == kIdMirrorShard1) {
+        dComIfGs_offCollectMirror(0);
+        return Result::success();
+    }
+    if (item_id == 165 || item_id == 166 || item_id == 167) {
+        dComIfGs_offCollectMirror(static_cast<u8>(item_id - 165 + 1));
+        return Result::success();
+    }
+
+    // Key items that live in one of the game's fixed item slots - clearing
+    // the slot is the real reverse of the matching item_func_* in
+    // src/d/d_item.cpp (see the comment on takeItem() in game_api.h for how
+    // these slot numbers were found).
+    switch (item_id) {
+        case 64: dComIfGs_setItem(SLOT_0, dItemNo_NONE_e); return Result::success();   // Boomerang
+        case 72: dComIfGs_setItem(SLOT_1, dItemNo_NONE_e); return Result::success();   // Lantern
+        case 65: dComIfGs_setItem(SLOT_2, dItemNo_NONE_e); return Result::success();   // Spinner
+        case 67: dComIfGs_setItem(SLOT_4, dItemNo_NONE_e); return Result::success();   // Bow
+        case 66: dComIfGs_setItem(SLOT_6, dItemNo_NONE_e); return Result::success();   // Ball and Chain
+        case 70: dComIfGs_setItem(SLOT_8, dItemNo_NONE_e); return Result::success();   // Dominion Rod
+        case 68: dComIfGs_setItem(SLOT_9, dItemNo_NONE_e); return Result::success();   // Clawshot
+        case 71: dComIfGs_setItem(SLOT_10, dItemNo_NONE_e); return Result::success();  // Double Clawshot
+        case 74: dComIfGs_setItem(SLOT_20, dItemNo_NONE_e); return Result::success();  // Fishing Rod
+        case 40: dComIfGs_offCollectSword(COLLECT_ORDON_SWORD); return Result::success();
+        case 41: dComIfGs_offCollectSword(COLLECT_MASTER_SWORD); return Result::success();
+        default: break;
+    }
+    return Result::failure("taking this item back isn't supported - no confirmed way to undo it");
 }
 
 Result shakeScreen(int strength) {
@@ -302,9 +396,12 @@ Result setBombs(int) { return Result::failure(kNoGame); }
 Result addBombs(int) { return Result::failure(kNoGame); }
 Result setTimeOfDay(int) { return Result::failure(kNoGame); }
 Result spawnActor(const std::string&) { return Result::failure(kNoGame); }
+Result warpToStage(const std::string&) { return Result::failure(kNoGame); }
 Result setWolfForm(bool) { return Result::failure(kNoGame); }
 bool isWolfForm() { return false; }
 Result setItemSlot(int, int) { return Result::failure(kNoGame); }
+Result giveItem(int) { return Result::failure(kNoGame); }
+Result takeItem(int) { return Result::failure(kNoGame); }
 Result shakeScreen(int) { return Result::failure(kNoGame); }
 Result showMessage(int) { return Result::failure(kNoGame); }
 Result playSound(unsigned int) { return Result::failure(kNoGame); }
