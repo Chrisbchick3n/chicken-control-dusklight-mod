@@ -156,6 +156,57 @@ void setControlsInverted(bool inverted);
 bool isMovementFrozen();
 bool areControlsInverted();
 
+// -- timed "chaos" toggles ---------------------------------------------------------
+// Added after comparing against every public Crowd Control-style effect set
+// for Twilight Princess (the official GameCube pack's published effects and
+// Carco's Chaos Mod for Dusklight). Each one is applied by a hook on a real
+// daAlink_c function from the decompilation, named next to each entry, so
+// it lands at the exact point in Link's frame where the game itself would
+// make that decision. While a toggle is off its hook does nothing at all.
+enum class Toggle {
+    NoSword,       // daAlink_c::checkCutAction - sword swings never start
+    NoTransform,   // daAlink_c::procCoMetamorphoseInit - Midna can't transform you
+                   //   (never blocks a story cutscene's own transform)
+    Invisible,     // daAlink_c::draw - Link isn't drawn
+    SuperSpeed,    // daAlink_c::setIceSlipSpeed - x/z velocity boosted
+    Slow,          //   same hook - x/z velocity cut
+    Slippery,      //   same hook - the ground is treated as ice (dBgW_SPCODE_ICE),
+                   //   so the game's own ice-sliding code runs everywhere
+    MoonJump,      //   same hook - hold R+A to rise (Dusklight's own cheat mechanic)
+    LowGravity,    //   same hook - most of each frame's gravity is undone
+    OneHitKO,      // daAlink_c::damageMagnification - returns 9999, the same value
+                   //   Dusklight's own "Instant Death" setting uses
+    Invincible,    //   same hook - returns 0 (no damage taken)
+    DoubleDamage,  //   same hook - the game's own multiplier, doubled
+    SwapButtons,   // mDoCPd_c::convert - A<->B and X<->Y swapped
+    SwordDrain,    // daAlink_c::setCutType - every sword swing costs a quarter heart
+    Count
+};
+void setToggle(Toggle which, bool on);
+bool isToggleOn(Toggle which);
+
+// Stretches/shrinks Link's model (visual only - his collision is unchanged,
+// so he still fits through every doorway). Applied every frame after
+// daAlink_c::setMatrix() via J3DModel::setBaseScale(). 1,1,1 = normal.
+void setLinkScale(float x, float y, float z);
+
+// Temporarily empties the item slot(s) an item lives in, remembering what
+// was there so restoreDisabledItems() can put it back - the same approach
+// Crowd Control's own TP pack takes for "Disable Clawshot". Only items whose
+// slot is confirmed (see takeItem()) are supported; Clawshot also clears the
+// Double Clawshot slot. Use restoreDisabledItems() to undo.
+Result disableItem(int item_id);
+void restoreDisabledItems();
+
+// Throws Link straight up for about a second (speed.y held at 56, the same
+// value Dusklight's built-in Moon Jump uses).
+Result rocketLaunch();
+
+// A real bomb explosion on Link: the nine particle effects and the sound
+// daNbomb_c uses when a normal bomb goes off (d_a_nbomb.cpp), plus a screen
+// quake, plus `quarter_hearts` of damage.
+Result explodeOnLink(int quarter_hearts);
+
 // -- setup -------------------------------------------------------------------------
 // Installs the game-function hooks this file depends on (currently just the
 // pad-read hook used by the input overrides above). Call once from

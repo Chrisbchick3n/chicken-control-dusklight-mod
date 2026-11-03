@@ -70,6 +70,11 @@ void EffectRunner::endEverything() {
     // mod could do, so it's worth being certain.
     game::setMovementFrozen(false);
     game::setControlsInverted(false);
+    for (int i = 0; i < static_cast<int>(game::Toggle::Count); ++i) {
+        game::setToggle(static_cast<game::Toggle>(i), false);
+    }
+    game::setLinkScale(1.0f, 1.0f, 1.0f);
+    game::restoreDisabledItems();
 }
 
 std::vector<std::string> EffectRunner::activeEffects() const {
@@ -92,12 +97,75 @@ void EffectRunner::startTimed(const std::string& id, double duration_seconds) {
     }
 }
 
+namespace {
+// Timed chaos effects: effect id -> the toggle it turns on, and how long it
+// lasts if the app doesn't send a "seconds" param.
+struct ToggleEffect {
+    const char* id;
+    game::Toggle toggle;
+    double default_seconds;
+};
+constexpr ToggleEffect kToggleEffects[] = {
+    {"player.no_sword", game::Toggle::NoSword, 20.0},
+    {"player.no_transform", game::Toggle::NoTransform, 30.0},
+    {"player.invisible", game::Toggle::Invisible, 20.0},
+    {"player.super_speed", game::Toggle::SuperSpeed, 20.0},
+    {"player.slow", game::Toggle::Slow, 20.0},
+    {"player.slippery", game::Toggle::Slippery, 30.0},
+    {"player.moon_jump", game::Toggle::MoonJump, 30.0},
+    {"player.low_gravity", game::Toggle::LowGravity, 20.0},
+    {"player.one_hit_ko", game::Toggle::OneHitKO, 30.0},
+    {"player.invincible", game::Toggle::Invincible, 20.0},
+    {"player.double_damage", game::Toggle::DoubleDamage, 30.0},
+    {"player.swap_buttons", game::Toggle::SwapButtons, 20.0},
+    {"player.sword_drain", game::Toggle::SwordDrain, 30.0},
+};
+
+// Size effects: id -> x, y, z scale.
+struct SizeEffect {
+    const char* id;
+    float x, y, z;
+};
+constexpr SizeEffect kSizeEffects[] = {
+    {"player.giant", 2.0f, 2.0f, 2.0f},
+    {"player.tiny", 0.4f, 0.4f, 0.4f},
+    {"player.wide", 2.2f, 1.0f, 2.2f},
+    {"player.paper_thin", 0.15f, 1.0f, 1.0f},
+    {"player.tall", 1.0f, 2.2f, 1.0f},
+};
+constexpr double kSizeSeconds = 30.0;
+constexpr double kDisableItemSeconds = 30.0;
+
+// Opposites cancel each other out instead of fighting.
+void clearOpposite(game::Toggle t) {
+    using game::Toggle;
+    switch (t) {
+        case Toggle::SuperSpeed: game::setToggle(Toggle::Slow, false); break;
+        case Toggle::Slow: game::setToggle(Toggle::SuperSpeed, false); break;
+        case Toggle::OneHitKO: game::setToggle(Toggle::Invincible, false); break;
+        case Toggle::Invincible:
+            game::setToggle(Toggle::OneHitKO, false);
+            game::setToggle(Toggle::DoubleDamage, false);
+            break;
+        default: break;
+    }
+}
+}  // namespace
+
 void EffectRunner::endTimed(const std::string& id) {
     std::cerr << "[chicken-control] " << id << " wore off\n";
     if (id == "player.freeze_movement") {
         game::setMovementFrozen(false);
     } else if (id == "player.invert_controls") {
         game::setControlsInverted(false);
+    } else if (id == "player.size") {
+        game::setLinkScale(1.0f, 1.0f, 1.0f);
+    } else if (id == "player.disable_item") {
+        game::restoreDisabledItems();
+    } else {
+        for (const auto& fx : kToggleEffects) {
+            if (id == fx.id) game::setToggle(fx.toggle, false);
+        }
     }
 }
 
@@ -214,6 +282,57 @@ void EffectRunner::registerHandlers() {
         // Shows one of the game's own messages by number. Custom text needs
         // a message added through Dusklight's own dialogue support.
         return game::showMessage(paramInt(cmd, "message_id", 0));
+    };
+
+    // ---- chaos (timed toggles) ----
+    // Each accepts an optional "seconds" param; otherwise uses its default.
+    for (const auto& fx : kToggleEffects) {
+        const game::Toggle toggle = fx.toggle;
+        const double default_seconds = fx.default_seconds;
+        handlers_[fx.id] = [this, toggle, default_seconds](const EffectCommand& cmd) {
+            if (!game::playerReady()) return game::Result::failure("no save loaded yet");
+            clearOpposite(toggle);
+            game::setToggle(toggle, true);
+            startTimed(cmd.id, paramInt(cmd, "seconds", static_cast<int>(default_seconds)));
+            return game::Result::success();
+        };
+    }
+
+    // ---- size (one size at a time; a new one replaces the old) ----
+    for (const auto& fx : kSizeEffects) {
+        const float x = fx.x, y = fx.y, z = fx.z;
+        handlers_[fx.id] = [this, x, y, z](const EffectCommand& cmd) {
+            if (!game::playerReady()) return game::Result::failure("no save loaded yet");
+            game::setLinkScale(x, y, z);
+            startTimed("player.size", paramInt(cmd, "seconds", static_cast<int>(kSizeSeconds)));
+            return game::Result::success();
+        };
+    }
+
+    // ---- take an item away for a while (e.g. Disable Clawshot) ----
+    handlers_["player.disable_item"] = [this](const EffectCommand& cmd) {
+        game::Result r = game::disableItem(paramInt(cmd, "item_id", 68));
+        if (r.ok) {
+            startTimed(cmd.id, paramInt(cmd, "seconds", static_cast<int>(kDisableItemSeconds)));
+        }
+        return r;
+    };
+
+    // ---- one-shots ----
+    handlers_["player.rocket_launch"] = [](const EffectCommand&) {
+        return game::rocketLaunch();
+    };
+
+    handlers_["player.explode"] = [](const EffectCommand& cmd) {
+        // Default: two hearts, like getting caught in your own bomb.
+        return game::explodeOnLink(paramInt(cmd, "hearts", 2) * kQuartersPerHeart);
+    };
+
+    // Clears every running effect - the "fix it" button if anything gets
+    // stuck (same idea as Crowd Control's Admin effects).
+    handlers_["admin.stop_all"] = [this](const EffectCommand&) {
+        endEverything();
+        return game::Result::success();
     };
 
     handlers_["audio.play_sfx"] = [](const EffectCommand& cmd) {
