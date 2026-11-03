@@ -19,7 +19,7 @@ if (NOT DEFINED CMAKE_BUILD_TYPE AND NOT DEFINED ENV{CMAKE_BUILD_TYPE})
     set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Build type")
 endif ()
 
-project(chicken_control_bridge VERSION 1.0.0 LANGUAGES CXX)
+project(chicken_control_bridge VERSION 1.1.0 LANGUAGES CXX)
 
 # Pinned to the Dusklight release this mod was built and tested against
 # (v2.0.1 for Windows x86_64, matching the user-reported install). Override
